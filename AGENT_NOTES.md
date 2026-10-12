@@ -42,6 +42,20 @@
   - Database CHECK constraint `received_within_issued` preventing `received_qty > qty` or negative quantities.
   - Idempotency guards in `seed/seed.sql` ensuring repeated seeding produces exact row counts without duplicate primary or foreign key collisions.
 
+### Phase 2: Receipt Transaction + T1 & T2 (Test-First)
+- **What was implemented:**
+  - `internal/testutil`: test infrastructure with `SetupTestDB(t)` (ensuring goose migrations are run once and truncating all tables with `RESTART IDENTITY CASCADE`) and `CreateFixtureIssue` fixture creator.
+  - `internal/receipts/receipts_test.go`: test suite for **T1** (`TestConcurrentReceiptsNeverOvershoot` testing both all-ones and mixed-quantities variants behind a start barrier) and **T2** (`TestIdempotencyKeyReplayCreatesNothing` testing sequential replays, 10 concurrent goroutines, and key reuse with mismatched payloads).
+  - `internal/receipts/receipts.go`: implemented `CreateReceipt(ctx, in Input, key *string)` executing steps 1-7 in a single transaction (validate -> insert receipt -> replay check on conflict -> guarded atomic counter UPDATE -> rollback on overshoot -> insert voucher -> commit).
+- **Test-First & Mutation Verification:**
+  - **Test-First Failure:** Executed tests against stub implementation first, showing T1 and T2 failing with `not implemented yet`.
+  - **Mutation 1 (Guarded UPDATE & CHECK constraint):** Temporarily removed `AND received_qty + $2 <= qty` from SQL and dropped `received_within_issued` from Postgres. Ran T1: failed immediately (`expected exactly 10 successful receipts, got 20; CRITICAL: received_qty 39 exceeded issued qty 10`). Restored both lines of defense.
+  - **Mutation 2 (Idempotency UNIQUE constraint):** Temporarily dropped `ON CONFLICT (idempotency_key) DO NOTHING` and `receipts_idempotency_key_uniq`. Ran T2: failed immediately (`expected replayed=true on second call, got false; expected exactly 1 receipt in DB, got 3; received_qty=15`). Restored both.
+  - **Stability Check:** After restoring, ran `go test ./internal/receipts -count=20`. All 20 iterations passed stably with zero flakes.
+- **What a reviewer should scrutinize:**
+  - The single transaction ordering: receipt insertion precedes the counter update so replay checks never consume quantity.
+  - Overshoot rollback handling: rolling back removes the provisional receipt before querying the issue for outstanding balance.
+
 ---
 
 ## What the Tools Got Wrong
