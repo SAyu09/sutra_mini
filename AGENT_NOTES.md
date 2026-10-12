@@ -56,6 +56,26 @@
   - The single transaction ordering: receipt insertion precedes the counter update so replay checks never consume quantity.
   - Overshoot rollback handling: rolling back removes the provisional receipt before querying the issue for outstanding balance.
 
+### Phase 3: HTTP Layer, Read Endpoints, Retry
+- **What was implemented:**
+  - `internal/issues`: implemented `GetIssue(ctx, id)` calculating `outstanding = issued - received`.
+  - `internal/vouchers`: implemented `List(ctx, status)` with optional status filter capped at 200, and `Retry(ctx, id)` resetting `failed` vouchers to `pending` (returning `ErrInvalidState` with current status name if `pending` or `pushed`).
+  - `internal/httpapi`:
+    - `errors.go`: centralized domain error mapper for all status codes (400 `INVALID_INPUT`, 404 `NOT_FOUND`, 409 `OVER_RECEIPT` with `outstanding`, 409 `INVALID_STATE`, 422 `IDEMPOTENCY_KEY_REUSED`, 500 `INTERNAL`).
+    - `json.go`: strict JSON decoder with 1 MiB limit, unknown field rejection, and trailing garbage checks.
+    - `middleware.go`: structured request logging (`slog`) and panic recovery middleware.
+    - `handlers.go`: thin HTTP handlers delegating directly to services with zero SQL.
+    - `router.go`: standard library `http.NewServeMux()` with Go pattern routing.
+  - `cmd/api/main.go`: server wiring with `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`, and graceful shutdown on SIGINT/SIGTERM.
+  - `scripts/curl_checks.sh`: automated curl script exercising all API responses, status codes, and headers.
+  - `scripts/concurrent_receipts.sh`: automated concurrency script firing 10 simultaneous receipts and asserting that issued quantity is never exceeded.
+- **What was caught or had to be fixed:**
+  - Verified `grep -rnE "SELECT|INSERT|UPDATE" internal/httpapi` returned zero matches, strictly satisfying invariant 8 (thin handlers, no SQL in handlers).
+  - Ensured `Retry` looks up voucher status on zero-rows update to distinguish 404 `NOT_FOUND` from 409 `INVALID_STATE` (specifying the current voucher status in the error message).
+- **What a reviewer should scrutinize:**
+  - The exact match between HTTP error payload shape `{"error":{"code":"...","message":"..."}}` and domain error types.
+  - Zero SQL invariant in `internal/httpapi`.
+
 ---
 
 ## What the Tools Got Wrong

@@ -107,3 +107,12 @@ func CreateFixtureIssue(t *testing.T, ctx context.Context, pool *pgxpool.Pool, q
 
 	return issueID
 }
+
+// SetVoucherStatus updates the status of a voucher for testing purposes.
+func SetVoucherStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id int64, status string) {
+	t.Helper()
+	query := `UPDATE vouchers SET status = $1 WHERE id = $2`
+	if _, err := pool.Exec(ctx, query, status, id); err != nil {
+		t.Fatalf("failed to update voucher status: %v", err)
+	}
+}
