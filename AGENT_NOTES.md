@@ -133,9 +133,29 @@
 - **What a reviewer should scrutinize:**
   - Fenced update clauses: every write requires `WHERE id = $1 AND claim_token = $2::uuid`.
   - 409 reconciliation logic: 409 is treated as success and extracts the mock's `external_ref`.
-  - Worker concurrency model: goroutines are spawned per voucher with individual timeouts, guaranteeing unblocked processing (G5).
+### Phase 6: Web UI (web/)
+- **What was implemented:**
+  - `web/`: Next.js 14 App Router application with TypeScript and Vanilla CSS.
+  - `web/next.config.js`: API proxy rewrite routing `/v1/:path*` to `http://localhost:8080/v1/:path*` to prevent CORS issues in local development.
+  - `web/app/utils.ts`: Currency formatting `formatPaiseToINR(amountPaise)` converting integer paise to ₹ currency strings with 2 decimals (e.g. 5000 -> ₹50.00, 0 -> ₹0.00, 50 -> ₹0.50, 1250000 -> ₹12,500.00). Timestamp formatting helper `formatDate`.
+  - `web/app/sync/page.tsx`: 3-column kanban dashboard:
+    - **Pending column**: lists vouchers awaiting processing with attempts, lease indicator, and scheduled next attempt time.
+    - **Pushed column**: lists synced vouchers with accounting reference (`external_ref`), and distinct visual badge (`⚡ Reconciled (409)`) for reconciled items.
+    - **Failed column**: lists vouchers that exhausted retries, displaying the last error message and an interactive **Retry button** calling `POST /v1/vouchers/:id/retry` with optimistic UI updates.
+    - Interactive simulation drawer: allows simulating new receipts via `POST /v1/jobwork/receipts` with auto-generated idempotency keys.
+    - Configurable live auto-polling toggle (every 2.5s) with visual pulse indicator.
+  - `web/app/page.tsx`: Redirects root `/` to `/sync`.
+  - `web/app/globals.css`: Modern, dark-mode design system with curated slate, amber, emerald, and rose tokens.
+- **What was caught or had to be fixed:**
+  - Next.js App Router enforces that `page.tsx` must not export non-default helper functions; extracted `formatPaiseToINR` into `web/app/utils.ts`.
+  - Confirmed `cd web && npm run build` compiles with 0 errors and generates static pages.
+- **What a reviewer should scrutinize:**
+  - Proper integer paise to rupee formatting without floating point artifacts.
+  - Rewrite rule in `next.config.js`.
+  - Interactive retry trigger on failed vouchers.
 
 ---
+
 
 
 ## What the Tools Got Wrong
