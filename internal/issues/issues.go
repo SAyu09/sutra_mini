@@ -72,3 +72,43 @@ func (s *Service) GetIssue(ctx context.Context, id int64) (*Issue, error) {
 	issue.Outstanding = issue.Issued - issue.Received
 	return &issue, nil
 }
+
+// ListIssues fetches all jobwork issues with their parties and SKUs.
+func (s *Service) ListIssues(ctx context.Context) ([]*Issue, error) {
+	query := `
+		SELECT j.id, j.qty, j.received_qty, j.rate_paise,
+		       p.id, p.name,
+		       s.id, s.code, s.name
+		FROM jobwork_issues j
+		JOIN parties p ON p.id = j.party_id
+		JOIN skus s ON s.id = j.sku_id
+		ORDER BY j.id ASC
+	`
+
+	rows, err := s.pool.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("list issues: %w", err)
+	}
+	defer rows.Close()
+
+	var result []*Issue
+	for rows.Next() {
+		var issue Issue
+		err := rows.Scan(
+			&issue.ID, &issue.Issued, &issue.Received, &issue.RatePaise,
+			&issue.Party.ID, &issue.Party.Name,
+			&issue.SKU.ID, &issue.SKU.Code, &issue.SKU.Name,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan issue: %w", err)
+		}
+		issue.Outstanding = issue.Issued - issue.Received
+		result = append(result, &issue)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows err: %w", err)
+	}
+
+	return result, nil
+}
+

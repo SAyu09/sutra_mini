@@ -10,6 +10,7 @@ func NewRouter(h *Handlers) http.Handler {
 
 	// /v1 routes
 	mux.HandleFunc("POST /v1/jobwork/receipts", h.handleCreateReceipt)
+	mux.HandleFunc("GET /v1/issues", h.handleListIssues)
 	mux.HandleFunc("GET /v1/issues/{id}", h.handleGetIssue)
 	mux.HandleFunc("GET /v1/vouchers", h.handleListVouchers)
 	mux.HandleFunc("POST /v1/vouchers/{id}/retry", h.handleRetryVoucher)
@@ -17,6 +18,7 @@ func NewRouter(h *Handlers) http.Handler {
 
 	// Unprefixed routes
 	mux.HandleFunc("POST /jobwork/receipts", h.handleCreateReceipt)
+	mux.HandleFunc("GET /issues", h.handleListIssues)
 	mux.HandleFunc("GET /issues/{id}", h.handleGetIssue)
 	mux.HandleFunc("GET /vouchers", h.handleListVouchers)
 	mux.HandleFunc("POST /vouchers/{id}/retry", h.handleRetryVoucher)

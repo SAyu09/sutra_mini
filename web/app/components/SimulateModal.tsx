@@ -9,6 +9,8 @@ import {
   Sparkles,
   ArrowRight,
   Info,
+  UserCheck,
+  Palette,
 } from 'lucide-react';
 import { formatPaiseToINR } from '../utils';
 
@@ -40,9 +42,42 @@ export function SimulateModal({
   const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [issueData, setIssueData] = useState<IssueData | null>(null);
   const [issueLoading, setIssueLoading] = useState(false);
+  const [issuesList, setIssuesList] = useState<IssueData[]>([]);
+  const [isManualId, setIsManualId] = useState(false);
 
+  // Fetch all issues list on open so the selector is dynamic
   useEffect(() => {
     if (!isOpen) return;
+
+    let active = true;
+    fetch('/v1/issues')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!active || !data) return;
+        const list: IssueData[] = Array.isArray(data)
+          ? data
+          : data.issues || data.data || [];
+        setIssuesList(list);
+        if (list.length > 0 && !list.some((i) => i.id === issueId)) {
+          setIssueId(list[0].id);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, [isOpen]);
+
+  // Fetch selected issue details
+  useEffect(() => {
+    if (!isOpen || !issueId || issueId <= 0) return;
+
+    // Fast local lookup if in issuesList
+    const cached = issuesList.find((i) => i.id === issueId);
+    if (cached) {
+      setIssueData(cached);
+    }
 
     let active = true;
     setIssueLoading(true);
@@ -62,7 +97,7 @@ export function SimulateModal({
     return () => {
       active = false;
     };
-  }, [isOpen, issueId]);
+  }, [isOpen, issueId, issuesList]);
 
   if (!isOpen) return null;
 
@@ -90,7 +125,7 @@ export function SimulateModal({
             </div>
             <h2 className="vibe-modal-title">Record Fabric Job-Work Receipt</h2>
             <p className="vibe-modal-desc">
-              Simulates incoming lot from embroidery job-worker with atomic voucher issuance
+              Record finished artisan lot from master job-worker with atomic voucher issuance
             </p>
           </div>
           <button
@@ -119,11 +154,17 @@ export function SimulateModal({
           {issueData ? (
             <div className="preview-details">
               <div className="preview-metric">
-                <span className="metric-k">Job-Worker</span>
-                <span className="metric-v">{issueData.party.name}</span>
+                <span className="metric-k">
+                  <UserCheck size={11} style={{ display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />
+                  Master Job-Worker
+                </span>
+                <span className="metric-v font-semibold">{issueData.party.name}</span>
               </div>
               <div className="preview-metric">
-                <span className="metric-k">SKU / Item</span>
+                <span className="metric-k">
+                  <Palette size={11} style={{ display: 'inline', marginRight: 4, verticalAlign: 'middle' }} />
+                  Art / Design & SKU
+                </span>
                 <span className="metric-v font-mono">{issueData.sku.name} ({issueData.sku.code})</span>
               </div>
               <div className="preview-metric">
@@ -140,23 +181,59 @@ export function SimulateModal({
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="vibe-modal-form">
-          {/* Issue ID Selector */}
+          {/* Dynamic Issue & Artisan Selector */}
           <div className="vibe-field-group">
-            <label htmlFor="modal-issue-id" className="vibe-label">
-              Job-Work Issue ID
-            </label>
-            <div className="vibe-input-wrap">
-              <Layers size={14} className="input-icon" />
-              <input
-                id="modal-issue-id"
-                type="number"
-                min="1"
-                required
-                value={issueId}
-                onChange={(e) => setIssueId(Number(e.target.value))}
-                className="vibe-input"
-              />
+            <div className="label-row">
+              <label htmlFor="modal-issue-select" className="vibe-label">
+                Select Active Job-Work Issue
+              </label>
+              <button
+                type="button"
+                style={{ background: 'transparent', color: 'var(--color-brand)', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
+                onClick={() => setIsManualId(!isManualId)}
+              >
+                {isManualId ? '← Choose from active list' : 'Enter Issue # manually'}
+              </button>
             </div>
+
+            {isManualId ? (
+              <div className="vibe-input-wrap">
+                <Layers size={14} className="input-icon" />
+                <input
+                  id="modal-issue-id"
+                  type="number"
+                  min="1"
+                  required
+                  value={issueId}
+                  onChange={(e) => setIssueId(Number(e.target.value))}
+                  className="vibe-input"
+                  placeholder="Enter Issue ID (e.g., 1, 2, 3)"
+                />
+              </div>
+            ) : (
+              <div className="vibe-input-wrap">
+                <Layers size={14} className="input-icon" />
+                <select
+                  id="modal-issue-select"
+                  value={issueId}
+                  onChange={(e) => setIssueId(Number(e.target.value))}
+                  className="vibe-input"
+                  style={{ paddingLeft: '2.3rem' }}
+                >
+                  {issuesList.length > 0 ? (
+                    issuesList.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        #{item.id} · {item.party.name} — {item.sku.name} ({item.outstanding} pcs available)
+                      </option>
+                    ))
+                  ) : (
+                    <option value={issueId}>
+                      Issue #{issueId} {issueData ? `(${issueData.party.name})` : ''}
+                    </option>
+                  )}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Quantity Input with Quick Chips */}
@@ -176,6 +253,17 @@ export function SimulateModal({
                     +{preset}
                   </button>
                 ))}
+                {issueData && issueData.outstanding > 0 && (
+                  <button
+                    key="max"
+                    type="button"
+                    className={`qty-chip ${qty === issueData.outstanding ? 'active' : ''}`}
+                    onClick={() => setQty(issueData.outstanding)}
+                    title={`Receive entire outstanding balance (${issueData.outstanding} pcs)`}
+                  >
+                    All ({issueData.outstanding})
+                  </button>
+                )}
               </div>
             </div>
             <input

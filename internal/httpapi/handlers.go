@@ -70,6 +70,17 @@ func (h *Handlers) handleCreateReceipt(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, res)
 }
 
+// GET /issues
+func (h *Handlers) handleListIssues(w http.ResponseWriter, r *http.Request) {
+	issues, err := h.issuesService.ListIssues(r.Context())
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"issues": issues})
+}
+
 // GET /issues/{id}
 func (h *Handlers) handleGetIssue(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")

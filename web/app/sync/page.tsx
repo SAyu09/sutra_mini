@@ -18,6 +18,28 @@ export default function SyncPage() {
   const [showSimModal, setShowSimModal] = useState(false);
   const [simulating, setSimulating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+
+  // Initialize theme from storage (default to 'light')
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('sutra_theme') as 'light' | 'dark' | null;
+      const initial = saved === 'dark' ? 'dark' : 'light';
+      setTheme(initial);
+      document.documentElement.setAttribute('data-theme', initial);
+    } catch {
+      document.documentElement.setAttribute('data-theme', 'light');
+    }
+  }, []);
+
+  const handleToggleTheme = () => {
+    const nextTheme = theme === 'light' ? 'dark' : 'light';
+    setTheme(nextTheme);
+    document.documentElement.setAttribute('data-theme', nextTheme);
+    try {
+      localStorage.setItem('sutra_theme', nextTheme);
+    } catch {}
+  };
 
   const showToast = useCallback((message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -174,6 +196,8 @@ export default function SyncPage() {
           onToggleAutoRefresh={setAutoRefresh}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
+          theme={theme}
+          onToggleTheme={handleToggleTheme}
         />
 
         {/* Aggregate Stats Row */}

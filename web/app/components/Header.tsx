@@ -7,6 +7,8 @@ import {
   Search,
   Sparkles,
   Layers,
+  Sun,
+  Moon,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -17,6 +19,8 @@ interface HeaderProps {
   onToggleAutoRefresh: (val: boolean) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
+  theme?: 'light' | 'dark';
+  onToggleTheme?: () => void;
 }
 
 export function Header({
@@ -27,6 +31,8 @@ export function Header({
   onToggleAutoRefresh,
   searchQuery,
   onSearchChange,
+  theme = 'light',
+  onToggleTheme,
 }: HeaderProps) {
   return (
     <header className="portal-header">
@@ -90,6 +96,20 @@ export function Header({
           <RefreshCw size={14} className={loading ? 'spin-icon' : ''} />
           <span>{loading ? 'Syncing...' : 'Refresh'}</span>
         </button>
+
+        {/* Theme Toggle Button */}
+        {onToggleTheme && (
+          <button
+            type="button"
+            id="theme-toggle-btn"
+            className="theme-toggle-btn"
+            onClick={onToggleTheme}
+            title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
+          >
+            {theme === 'light' ? <Moon size={14} /> : <Sun size={14} />}
+            <span>{theme === 'light' ? 'Dark Mode' : 'Light Mode'}</span>
+          </button>
+        )}
 
         {/* Auto sync switch */}
         <label className="auto-sync-toggle" title="Auto-refresh voucher list every 2.5s">
