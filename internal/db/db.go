@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -30,12 +31,15 @@ func DefaultOptions() Options {
 }
 
 // Connect creates a pgxpool.Pool with connection retry and exponential backoff
-// to gracefully handle Neon cold starts.
+// to gracefully handle Neon/Supabase cold starts and poolers.
 func Connect(ctx context.Context, connString string, opts Options) (*pgxpool.Pool, error) {
 	config, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
+
+	// Disable prepared statement cache for compatibility with PgBouncer / Supabase poolers
+	config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 
 	if opts.MaxConns <= 0 {
 		opts.MaxConns = 5
@@ -78,7 +82,7 @@ func Connect(ctx context.Context, connString string, opts Options) (*pgxpool.Poo
 		}
 
 		lastErr = err
-		slog.Warn("database connection attempt failed, retrying (Neon cold start)...",
+		slog.Warn("database connection attempt failed, retrying...",
 			"attempt", attempt,
 			"error", err,
 			"next_retry_in", interval,
@@ -86,7 +90,7 @@ func Connect(ctx context.Context, connString string, opts Options) (*pgxpool.Poo
 
 		select {
 		case <-timeoutCtx.Done():
-			return nil, fmt.Errorf("connecting to database timed out (Neon cold start): %w", lastErr)
+			return nil, fmt.Errorf("connecting to database timed out: %w", lastErr)
 		case <-time.After(interval):
 		}
 
