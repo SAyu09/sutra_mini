@@ -79,6 +79,7 @@ type VoucherPushRequest struct {
 // Handler returns the HTTP handler for the mock server.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/accounting/vouchers", s.handlePostVoucher)
 	mux.HandleFunc("POST /api/vouchers", s.handlePostVoucher)
 	mux.HandleFunc("GET /healthz", s.handleHealthz)
 	return mux

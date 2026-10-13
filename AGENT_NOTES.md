@@ -100,7 +100,43 @@
   - Locking boundary in `handlePostVoucher`: mutex is released BEFORE `time.After` or sleep begins.
   - Registration ordering: `client_ref` is recorded before any simulated network delay or hang.
 
+### Phase 5: Sync Worker + W1-W4 Tests (G4, G5)
+- **What was implemented:**
+  - `internal/vouchers/vouchers.go`: Added `ClaimedVoucher` struct and core voucher lifecycle persistence methods:
+    - `Claim(ctx, limit, lease)`: implements atomic `FOR UPDATE SKIP LOCKED` claim query setting `locked_until = now() + lease::interval` and generating a unique `claim_token = gen_random_uuid()` per claimed row.
+    - `MarkPushed(ctx, id, claimToken, externalRef)`: fenced write `WHERE id = $1 AND claim_token = $2::uuid` setting status `pushed`, attempts + 1, clearing locks.
+    - `MarkFailed(ctx, id, claimToken, attempts, lastError)`: fenced write updating status to `failed` upon reaching `MAX_ATTEMPTS`.
+    - `ScheduleRetry(ctx, id, claimToken, attempts, lastError, nextAttemptAt)`: fenced write resetting status to `pending` with exponential backoff and jitter.
+  - `internal/worker/accounting_client.go`: HTTP client with configurable timeouts communicating with accounting service:
+    - Decodes 200 OK and 409 Conflict extracting `external_ref`.
+    - Treats 409 Conflict as reconciliation success (G4).
+    - Translates non-200 / non-409 errors into transient failure results.
+  - `internal/worker/processor.go`: Coordinates processing single voucher:
+    - Dispatches to `client.PostVoucher`.
+    - Evaluates 200 / 409 -> executes fenced `MarkPushed`.
+    - Evaluates failures -> computes `backoff = BACKOFF_BASE * (2 ^ (attempts - 1))` with uniform jitter in `[-BACKOFF_JITTER, +BACKOFF_JITTER]`.
+    - Executes fenced updates; if rows affected == 0, detects lost lease and drops voucher without overwriting.
+  - `internal/worker/worker.go`: Polling daemon and concurrency engine:
+    - Per-voucher goroutines bounded by `Concurrency` semaphore channel.
+    - Graceful shutdown on context cancellation (`sync.WaitGroup` drain).
+    - `RunOnce` helper for synchronous test execution.
+  - `cmd/worker/main.go`: Worker entrypoint with SIGINT/SIGTERM trap and clean shutdown timeout.
+  - `internal/worker/worker_test.go`: Complete W1–W4 test suite:
+    - **W1** (`TestTwoWorkersNoDoubleClaimNoDoublePost`): 2 concurrent worker instances process 10 vouchers with 0 double posts and 0 concurrency conflicts.
+    - **W2** (`TestCrashBetweenPostAndUpdateReconcilesVia409`): Simulates crash between POST and DB update; second worker run gets 409 and reconciles cleanly to `pushed`.
+    - **W3** (`TestPermanentFailureEndsFailedWithReason`): Simulates permanent 500 error; retries up to 3 attempts, marks `failed`, records last error, drops from retry queue.
+    - **W4** (`TestStaleClaimCannotOverwrite`): Proves fenced write rejects update with stale claim token when lease is stolen.
+- **What was caught or had to be fixed:**
+  - `migrations/0001_schema.sql` does not include `posted_at`; verified schema columns (`updated_at` used for timestamp tracking).
+  - Mock server originally only routed `POST /api/vouchers`; added `POST /v1/accounting/vouchers` route matching Section 10 so both paths work seamlessly.
+  - Confirmed `W1` stability with `-count=5` and zero data races with `go test -race ./internal/worker`.
+- **What a reviewer should scrutinize:**
+  - Fenced update clauses: every write requires `WHERE id = $1 AND claim_token = $2::uuid`.
+  - 409 reconciliation logic: 409 is treated as success and extracts the mock's `external_ref`.
+  - Worker concurrency model: goroutines are spawned per voucher with individual timeouts, guaranteeing unblocked processing (G5).
+
 ---
+
 
 ## What the Tools Got Wrong
 *(Concrete examples of AI/tool mistakes, misinterpretations, or corrections encountered during development)*

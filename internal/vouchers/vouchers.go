@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -133,4 +134,144 @@ func (s *Service) Retry(ctx context.Context, id int64) (*Voucher, error) {
 	}
 
 	return &v, nil
+}
+
+// ClaimedVoucher represents a voucher atomically claimed by a worker with an active lease.
+type ClaimedVoucher struct {
+	ID          int64
+	SourceID    int64
+	Type        string
+	AmountPaise int64
+	ClientRef   string
+	Attempts    int
+	Status      string
+	CreatedAt   time.Time
+	ClaimToken  string
+	LockedUntil time.Time
+}
+
+// Claim atomically selects and leases up to limit pending vouchers using FOR UPDATE SKIP LOCKED.
+func (s *Service) Claim(ctx context.Context, limit int, lease time.Duration) ([]ClaimedVoucher, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	leaseInterval := fmt.Sprintf("%d seconds", int(lease.Seconds()))
+	if lease.Seconds() <= 0 {
+		leaseInterval = "15 seconds"
+	}
+
+	query := `
+		WITH claimable AS (
+			SELECT id
+			FROM vouchers
+			WHERE status = 'pending'
+			  AND next_attempt_at <= now()
+			  AND (locked_until IS NULL OR locked_until < now())
+			ORDER BY created_at ASC
+			LIMIT $1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE vouchers v
+		SET locked_until = now() + $2::interval,
+		    claim_token = gen_random_uuid(),
+		    updated_at = now()
+		FROM claimable
+		WHERE v.id = claimable.id
+		RETURNING v.id, v.source_id, v.type, v.amount_paise, v.client_ref, v.attempts, v.status, v.created_at, v.claim_token, v.locked_until;
+	`
+
+	rows, err := s.pool.Query(ctx, query, limit, leaseInterval)
+	if err != nil {
+		return nil, fmt.Errorf("claim vouchers: %w", err)
+	}
+	defer rows.Close()
+
+	var claimed []ClaimedVoucher
+	for rows.Next() {
+		var v ClaimedVoucher
+		var claimToken uuid.UUID
+		if err := rows.Scan(
+			&v.ID, &v.SourceID, &v.Type, &v.AmountPaise, &v.ClientRef,
+			&v.Attempts, &v.Status, &v.CreatedAt, &claimToken, &v.LockedUntil,
+		); err != nil {
+			return nil, fmt.Errorf("scan claimed voucher: %w", err)
+		}
+		v.ClaimToken = claimToken.String()
+		claimed = append(claimed, v)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate claimed vouchers: %w", err)
+	}
+
+	return claimed, nil
+}
+
+// MarkPushed performs a fenced write updating the voucher to 'pushed' with the given external_ref.
+// Returns (true, nil) if successfully updated, or (false, nil) if the fenced write affected 0 rows (lease lost).
+func (s *Service) MarkPushed(ctx context.Context, id int64, claimToken string, externalRef string) (bool, error) {
+	query := `
+		UPDATE vouchers
+		SET status = 'pushed',
+		    external_ref = $3,
+		    attempts = attempts + 1,
+		    last_error = NULL,
+		    locked_until = NULL,
+		    claim_token = NULL,
+		    updated_at = now()
+		WHERE id = $1 AND claim_token = $2::uuid;
+	`
+
+	cmd, err := s.pool.Exec(ctx, query, id, claimToken, externalRef)
+	if err != nil {
+		return false, fmt.Errorf("fenced mark pushed: %w", err)
+	}
+
+	return cmd.RowsAffected() > 0, nil
+}
+
+// MarkFailed performs a fenced write updating the voucher to 'failed' with the last error.
+// Returns (true, nil) if successfully updated, or (false, nil) if lease was lost.
+func (s *Service) MarkFailed(ctx context.Context, id int64, claimToken string, attempts int, lastError string) (bool, error) {
+	query := `
+		UPDATE vouchers
+		SET status = 'failed',
+		    attempts = $3,
+		    last_error = $4,
+		    locked_until = NULL,
+		    claim_token = NULL,
+		    updated_at = now()
+		WHERE id = $1 AND claim_token = $2::uuid;
+	`
+
+	cmd, err := s.pool.Exec(ctx, query, id, claimToken, attempts, lastError)
+	if err != nil {
+		return false, fmt.Errorf("fenced mark failed: %w", err)
+	}
+
+	return cmd.RowsAffected() > 0, nil
+}
+
+// ScheduleRetry performs a fenced write rescheduling the voucher with backoff and jitter.
+// Returns (true, nil) if successfully updated, or (false, nil) if lease was lost.
+func (s *Service) ScheduleRetry(ctx context.Context, id int64, claimToken string, attempts int, lastError string, nextAttemptAt time.Time) (bool, error) {
+	query := `
+		UPDATE vouchers
+		SET status = 'pending',
+		    attempts = $3,
+		    last_error = $4,
+		    next_attempt_at = $5,
+		    locked_until = NULL,
+		    claim_token = NULL,
+		    updated_at = now()
+		WHERE id = $1 AND claim_token = $2::uuid;
+	`
+
+	cmd, err := s.pool.Exec(ctx, query, id, claimToken, attempts, lastError, nextAttemptAt)
+	if err != nil {
+		return false, fmt.Errorf("fenced schedule retry: %w", err)
+	}
+
+	return cmd.RowsAffected() > 0, nil
 }
