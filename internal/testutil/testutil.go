@@ -56,14 +56,31 @@ func SetupTestDB(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("migration failed: %v", migrateErr)
 	}
 
+	// Acquire session-level advisory lock so concurrent test packages serialize safely
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		pool.Close()
+		t.Fatalf("failed to acquire connection for advisory lock: %v", err)
+	}
+
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(987654321);"); err != nil {
+		conn.Release()
+		pool.Close()
+		t.Fatalf("failed to acquire test advisory lock: %v", err)
+	}
+
 	// Truncate tables and restart identity cascade
 	truncateQuery := `TRUNCATE TABLE vouchers, jobwork_receipts, jobwork_issues, parties, skus RESTART IDENTITY CASCADE;`
-	if _, err := pool.Exec(ctx, truncateQuery); err != nil {
+	if _, err := conn.Exec(ctx, truncateQuery); err != nil {
+		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock(987654321);")
+		conn.Release()
 		pool.Close()
 		t.Fatalf("failed to truncate test tables: %v", err)
 	}
 
 	t.Cleanup(func() {
+		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock(987654321);")
+		conn.Release()
 		pool.Close()
 	})
 

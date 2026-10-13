@@ -76,6 +76,30 @@
   - The exact match between HTTP error payload shape `{"error":{"code":"...","message":"..."}}` and domain error types.
   - Zero SQL invariant in `internal/httpapi`.
 
+### Phase 4: Mock Accounting Server + M1
+- **What was implemented:**
+  - `internal/mock/mock.go`: implemented chaos accounting server matching Section 10:
+    - Step 1: validate JSON and require non-empty `client_ref` (400 `INVALID_INPUT`).
+    - Step 2: check in-memory registry: if known `client_ref`, return 409 Conflict with stored `external_ref` (reconciliation).
+    - Step 3: roll dice for `ERROR_RATE` (return 500 without recording anything).
+    - Step 4: RECORD `client_ref -> new external_ref` BEFORE any sleep.
+    - Step 5: roll dice for `HANG_RATE` (sleep `HANG_DURATION` respecting context, **WITHOUT holding the mutex**).
+    - Step 6: return 200 OK with `{"external_ref":"EXT-<uuid>"}`.
+    - Abstracted randomness behind `RandomSource` interface for deterministic testing.
+  - `cmd/mock/main.go`: server wiring with timeouts, graceful shutdown, and structured logging.
+  - `internal/mock/mock_test.go` (**M1**): test suite covering all branches:
+    - Branch 1: simulated 500 error records nothing.
+    - Branch 2: success records `external_ref`.
+    - Branch 3: duplicate `client_ref` returns 409 with original `external_ref`.
+    - Branch 4: hang branch verifies `client_ref` is recorded in registry *before* sleep begins.
+    - Branch 5: verifies a hanging request does *not* block concurrent requests (mutex released prior to sleep).
+    - Context cancellation during hang exits cleanly without goroutine leaks.
+- **What was caught or had to be fixed:**
+  - Double-checked that the `sync.Mutex` guarding the mock registry is unlocked immediately after writing `client_ref -> extRef` in Step 4, completely decoupled from the subsequent sleep in Step 5. Verified via both M1 test and live curl that a concurrent request finishes in 13ms while another request is mid-hang.
+- **What a reviewer should scrutinize:**
+  - Locking boundary in `handlePostVoucher`: mutex is released BEFORE `time.After` or sleep begins.
+  - Registration ordering: `client_ref` is recorded before any simulated network delay or hang.
+
 ---
 
 ## What the Tools Got Wrong

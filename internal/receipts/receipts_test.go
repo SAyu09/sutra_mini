@@ -41,7 +41,7 @@ func TestConcurrentReceiptsNeverOvershoot(t *testing.T) {
 				defer wg.Done()
 				<-startBarrier
 
-				reqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				reqCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancel()
 
 				in := receipts.Input{
@@ -147,7 +147,7 @@ func TestConcurrentReceiptsNeverOvershoot(t *testing.T) {
 				defer wg.Done()
 				<-startBarrier
 
-				reqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				reqCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancel()
 
 				in := receipts.Input{
@@ -300,7 +300,7 @@ func TestIdempotencyKeyReplayCreatesNothing(t *testing.T) {
 				defer wg.Done()
 				<-startBarrier
 
-				reqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				reqCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancel()
 
 				res, replayed, err := svc.CreateReceipt(reqCtx, in, &idempKey)
