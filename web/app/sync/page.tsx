@@ -46,7 +46,8 @@ export default function SyncPage() {
         throw new Error(`Failed to load vouchers: HTTP ${res.status}`);
       }
       const data = await res.json();
-      setVouchers(data.data || []);
+      const list = Array.isArray(data) ? data : (data.vouchers || data.data || []);
+      setVouchers(list);
       setLastUpdated(new Date());
     } catch (err: unknown) {
       if (!isBackground) {
@@ -112,7 +113,11 @@ export default function SyncPage() {
       if (!res.ok) {
         throw new Error(data.error?.message || `HTTP ${res.status}`);
       }
-      showToast(`Receipt #${data.data.receipt.id} recorded! Voucher #${data.data.voucher.id} queued.`, 'success');
+      const receipt = data.receipt || data.data?.receipt;
+      const voucher = data.voucher || data.data?.voucher;
+      const rId = receipt?.id ? `#${receipt.id} ` : '';
+      const vId = voucher?.id ? ` Voucher #${voucher.id} queued.` : '';
+      showToast(`Receipt ${rId}recorded!${vId}`, 'success');
       setShowSimModal(false);
       await fetchVouchers(false);
     } catch (err: unknown) {
